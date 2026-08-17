@@ -1,16 +1,13 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import asyncio
-from model  import AIModelAgent
+from server.model import AiModel
 
-app  = FastAPI()
+app = FastAPI()
 queue = asyncio.Queue()
-
-
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(dynamic_batch_worker)
-
+    asyncio.create_task(dynamic_batch_worker())
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -18,42 +15,40 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.accept()
         while True:
             data = await websocket.receive_text()
-            dict = {"text":data,"ws":websocket}
-            queue.put_nowait(dict)
-
+            log_packet = {"text": data, "ws": websocket}
+            queue.put_nowait(log_packet)
     except WebSocketDisconnect:
-        print("Network is disconnected")
-
-AiModel = AIModelAgent()
-@app.websocket("/ws")
+        print("🔌 Network is disconnected safely.")
 
 async def dynamic_batch_worker():
-
     while True:
         first_message = await queue.get()
         messages = [first_message]
-        while len(messages) <= 4:
+        
+        while len(messages) < 4:
             try:
                 message = queue.get_nowait()
                 messages.append(message)
-            except asyncio.QueueEmpty :
+            except asyncio.QueueEmpty:
                 break
 
-            texts = [messages["text"] for _ in messages ]
+        # 🟢 Correctly extract the raw text elements out of the memory list
+        texts = [item["text"] for item in messages]
 
-        scores = await asyncio.to_thread(AiModel.classify_log,texts)
+        scores = await asyncio.to_thread(AiModel.classify_log, texts)
 
-        for index,message in enumerate(messages):
+        for index, message in enumerate(messages):
             client = message["ws"]
-            ai_score  = scores[index]
-            try :
-                await client.send_text(ai_score)
-
-            except:
-                print("connection failed")
+            ai_score = scores[index]
+            try:
+                # 🟢 Cast to a string so it travels smoothly across the network wire
+                await client.send_text(str(ai_score))
+            except Exception:
+                print("⚠️ Transmission failed. Socket dead.")
 
         for _ in range(len(messages)):
             queue.task_done()
+
 
             
 
